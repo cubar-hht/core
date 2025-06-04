@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Awaitable, Callable, Coroutine, Iterable
+from collections.abc import Callable, Coroutine, Iterable
 import dataclasses
 from enum import Enum
 from functools import cache, partial
@@ -42,6 +42,7 @@ from homeassistant.core import (
 )
 from homeassistant.exceptions import (
     HomeAssistantError,
+    ServiceNotSupported,
     TemplateError,
     Unauthorized,
     UnknownUser,
@@ -87,6 +88,7 @@ def _base_components() -> dict[str, ModuleType]:
     # pylint: disable-next=import-outside-toplevel
     from homeassistant.components import (
         alarm_control_panel,
+        assist_satellite,
         calendar,
         camera,
         climate,
@@ -107,6 +109,7 @@ def _base_components() -> dict[str, ModuleType]:
 
     return {
         "alarm_control_panel": alarm_control_panel,
+        "assist_satellite": assist_satellite,
         "calendar": calendar,
         "camera": camera,
         "climate": climate,
@@ -132,8 +135,7 @@ def _validate_option_or_feature(option_or_feature: str, label: str) -> Any:
         domain, enum, option = option_or_feature.split(".", 2)
     except ValueError as exc:
         raise vol.Invalid(
-            f"Invalid {label} '{option_or_feature}', expected "
-            "<domain>.<enum>.<member>"
+            f"Invalid {label} '{option_or_feature}', expected <domain>.<enum>.<member>"
         ) from exc
 
     base_components = _base_components()
@@ -225,7 +227,7 @@ class ServiceParams(TypedDict):
 class ServiceTargetSelector:
     """Class to hold a target selector for a service."""
 
-    __slots__ = ("entity_ids", "device_ids", "area_ids", "floor_ids", "label_ids")
+    __slots__ = ("area_ids", "device_ids", "entity_ids", "floor_ids", "label_ids")
 
     def __init__(self, service_call: ServiceCall) -> None:
         """Extract ids from service call data."""
@@ -502,7 +504,7 @@ def _has_match(ids: str | list[str] | None) -> TypeGuard[str | list[str]]:
 
 
 @bind_hass
-def async_extract_referenced_entity_ids(  # noqa: C901
+def async_extract_referenced_entity_ids(
     hass: HomeAssistant, service_call: ServiceCall, expand_group: bool = True
 ) -> SelectedEntities:
     """Extract referenced entity IDs from a service call."""
@@ -986,9 +988,7 @@ async def entity_service_call(
         ):
             # If entity explicitly referenced, raise an error
             if referenced is not None and entity.entity_id in referenced.referenced:
-                raise HomeAssistantError(
-                    f"Entity {entity.entity_id} does not support this service."
-                )
+                raise ServiceNotSupported(call.domain, call.service, entity.entity_id)
 
             continue
 
@@ -1094,9 +1094,15 @@ async def _handle_entity_call(
 
 async def _async_admin_handler(
     hass: HomeAssistant,
-    service_job: HassJob[[ServiceCall], Awaitable[None] | None],
+    service_job: HassJob[
+        [ServiceCall],
+        Coroutine[Any, Any, ServiceResponse | EntityServiceResponse]
+        | ServiceResponse
+        | EntityServiceResponse
+        | None,
+    ],
     call: ServiceCall,
-) -> None:
+) -> ServiceResponse | EntityServiceResponse | None:
     """Run an admin service."""
     if call.context.user_id:
         user = await hass.auth.async_get_user(call.context.user_id)
@@ -1105,9 +1111,10 @@ async def _async_admin_handler(
         if not user.is_admin:
             raise Unauthorized(context=call.context)
 
-    result = hass.async_run_hass_job(service_job, call)
-    if result is not None:
-        await result
+    task = hass.async_run_hass_job(service_job, call)
+    if task is not None:
+        return await task
+    return None
 
 
 @bind_hass
@@ -1116,8 +1123,15 @@ def async_register_admin_service(
     hass: HomeAssistant,
     domain: str,
     service: str,
-    service_func: Callable[[ServiceCall], Awaitable[None] | None],
+    service_func: Callable[
+        [ServiceCall],
+        Coroutine[Any, Any, ServiceResponse | EntityServiceResponse]
+        | ServiceResponse
+        | EntityServiceResponse
+        | None,
+    ],
     schema: VolSchemaType = vol.Schema({}, extra=vol.PREVENT_EXTRA),
+    supports_response: SupportsResponse = SupportsResponse.NONE,
 ) -> None:
     """Register a service that requires admin access."""
     hass.services.async_register(
@@ -1129,6 +1143,7 @@ def async_register_admin_service(
             HassJob(service_func, f"admin service {domain}.{service}"),
         ),
         schema,
+        supports_response,
     )
 
 
@@ -1277,14 +1292,12 @@ def async_register_entity_service(
         schema = cv.make_entity_service_schema(schema)
     elif not cv.is_entity_service_schema(schema):
         # pylint: disable-next=import-outside-toplevel
-        from .frame import report
+        from .frame import ReportBehavior, report_usage
 
-        report(
-            (
-                "registers an entity service with a non entity service schema "
-                "which will stop working in HA Core 2025.9"
-            ),
-            error_if_core=False,
+        report_usage(
+            "registers an entity service with a non entity service schema",
+            core_behavior=ReportBehavior.LOG,
+            breaks_in_ha_version="2025.9",
         )
 
     service_func: str | HassJob[..., Any]

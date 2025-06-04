@@ -25,7 +25,9 @@ CONF_ADDON_S2_AUTHENTICATED_KEY = "s2_authenticated_key"
 CONF_ADDON_S2_UNAUTHENTICATED_KEY = "s2_unauthenticated_key"
 CONF_ADDON_LR_S2_ACCESS_CONTROL_KEY = "lr_s2_access_control_key"
 CONF_ADDON_LR_S2_AUTHENTICATED_KEY = "lr_s2_authenticated_key"
+CONF_INSTALLER_MODE = "installer_mode"
 CONF_INTEGRATION_CREATED_ADDON = "integration_created_addon"
+CONF_KEEP_OLD_DEVICES = "keep_old_devices"
 CONF_NETWORK_KEY = "network_key"
 CONF_S0_LEGACY_KEY = "s0_legacy_key"
 CONF_S2_ACCESS_CONTROL_KEY = "s2_access_control_key"
@@ -200,3 +202,7 @@ COVER_TILT_PROPERTY_KEYS: set[str | int | None] = {
     WindowCoveringPropertyKey.VERTICAL_SLATS_ANGLE,
     WindowCoveringPropertyKey.VERTICAL_SLATS_ANGLE_NO_POSITION,
 }
+
+# Other constants
+
+DRIVER_READY_TIMEOUT = 60
